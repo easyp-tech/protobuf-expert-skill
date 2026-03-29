@@ -1,0 +1,6 @@
+# Local skill installation artifacts
+.agents/
+.windsurf/
+.cursor/
+.claude/
+skills-lock.json
