@@ -1,0 +1,22 @@
+{
+  "name": "protobuf-expert-skill",
+  "description": "Protocol Buffers expert with deep EasyP CLI knowledge. Helps with writing and reviewing .proto files, configuring easyp.yaml, choosing lint rules, setting up code generation, managing proto dependencies, detecting breaking API changes, and debugging easyp errors.",
+  "version": "0.1.0",
+  "author": {
+    "name": "EasyP Tech"
+  },
+  "homepage": "https://github.com/easyp-tech/protobuf-expert-skill",
+  "repository": "https://github.com/easyp-tech/protobuf-expert-skill",
+  "license": "MIT",
+  "keywords": [
+    "protobuf",
+    "protocol-buffers",
+    "easyp",
+    "buf",
+    "grpc",
+    "lint",
+    "code-generation",
+    "claude-code",
+    "skills"
+  ]
+}
