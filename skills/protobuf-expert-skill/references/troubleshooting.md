@@ -69,7 +69,9 @@ easyp --debug <command>                 # verbose logs on stderr
 | `multiple independent policies found` | Choose one with `easyp --cfg path/easyp.yaml lint` |
 | More lint findings after switching to `default: STANDARD` | v0 `use: [DEFAULT]` meant only 8 rules; STANDARD is 32. Disable rules or keep the migrated lists. |
 | `symbol "…" already defined at …` in breaking | Module root `.` contains duplicate example/test protos. Scope with `--path proto`, or narrow `roots`. |
-| Breaking: ref not found (exit 2) | Fetch history: `git fetch origin main`, `fetch-depth: 0` in CI |
+| Breaking: ref not found (exit 2) | Fetch history: `git fetch origin main`, `fetch-depth: 0` in CI. Check the branch name: `master` vs `main`. |
+| `compile baseline descriptors: … Resolve x/y.proto: … no such file` | The baseline revision has v0 config and dependencies, and v1 cannot resolve them. Expected until the migration is merged; run v0 `easyp breaking` for that PR. |
+| `module X has conflicting requirements A and B` | Two requirements pin X differently, often your pin vs a dependency's fixed BSR snapshot. Pin X to the commit the dependency requires, or drop the version. |
 | Many new FILE findings after migration | The v1 descriptor checker is stricter (file moves, `go_package`); choose a looser profile if appropriate |
 
 ## Exit codes

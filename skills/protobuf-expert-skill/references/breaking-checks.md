@@ -16,7 +16,7 @@ easyp --format json breaking --against v1.4.0
   - 0: compatible;
   - 1: breaking changes, or any error;
   - 2: ref or repository not found, or missing import.
-- **Comparing with an older config:** works even when the baseline revision still has **v0** config, which is the normal state right after migration.
+- **Baseline still on v0 config** (right after migrating): this works only when the project has no dependencies. Otherwise the baseline compile cannot resolve dependency imports, because the v0 revision has no `protobuf.lock`. Use a v0 `easyp breaking` for that one PR, see [migration-v0-to-v1.md](./migration-v0-to-v1.md#step-7--verify-on-v1).
 
 ## Configuration
 

@@ -95,7 +95,7 @@ easyp --format json breaking --against HEAD~1
 | `--against` | `breaking.baseline`, then `master` | Raw Git ref (no `git:` prefix on the CLI) |
 | `--path`, `-p` / `--root`, `-r` | `.` / policy dir | Same as lint |
 
-- **How revisions are compared:** each revision is compiled with its *own* manifest and lock. A v1 working tree can therefore be compared with a baseline that still has v0 config.
+- **How revisions are compared:** each revision is compiled with its *own* manifest and lock. A baseline that still has v0 config works only for projects without dependencies; otherwise the run fails with `compile baseline descriptors: … Resolve …`.
 - **Profiles:** set by `breaking.categories` (default FILE); see [breaking-checks.md](./breaking-checks.md).
 - **Exit codes:**
   - 0: compatible;

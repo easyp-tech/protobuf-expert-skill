@@ -39,11 +39,17 @@ legacy EasyP configuration detected; run easyp migrate --module <identity> to pr
 
 ## Step 1 — Inventory
 
-1. **Find every EasyP config in the repository, not just the root one.** v1 `lint` walks descendant policies, and `validate-config` scans every directory, hidden ones included. A single nested v0 `easyp.yaml` (an `examples/` project, a skill asset under `.agents/`) breaks the root run.
+1. **Find every EasyP config in the repository, not just the root one.**
+   - `validate-config` scans every directory, hidden ones included.
+   - `lint` reads descendant policies in non-hidden directories.
+   - So a nested v0 `easyp.yaml` breaks the v1 run: an `examples/` project fails `lint` and `validate-config`, and a skill asset under `.agents/` fails `validate-config`.
+
+   Search both the working tree **and** the tracked files. A dirty tree can hide files that a clean CI checkout still has.
 
    ```bash
    find . \( -name easyp.yaml -o -name easyp.yml -o -name protobuf.mod -o -name easyp.lock \) \
      -not -path '*/node_modules/*' -not -path '*/easyp_vendor/*' -not -path './.git/*'
+   git ls-files | grep -E '(^|/)(easyp\.ya?ml|protobuf\.mod|easyp\.lock)$'
    ```
 
 2. **Classify each directory:**
@@ -61,16 +67,21 @@ legacy EasyP configuration detected; run easyp migrate --module <identity> to pr
 
 Before touching configs, record what v0 produces so that the v1 result can be compared with it.
 
+Work on a dedicated branch. If `git status` shows unrelated changes, ask the user whether to commit them first, or do the migration in a separate `git worktree`. Do not stash blindly: stashing can bring back deleted files, nested v0 configs among them.
+
+Run lint, generate and breaking **exactly the way the project already does**: copy the flags from its Taskfile, Makefile or CI (`-p api`, `-p proto -r .` or no flags at all). Write logs inside the repo's ignored scratch area, or in the agent's scratch directory, not in `/tmp`.
+
 ```bash
-git status --short                 # must be clean; ask the user to commit or stash first
 EASYP_V0="go run github.com/easyp-tech/easyp/cmd/easyp@v0.17.0"   # or an installed v0 binary
 
-$EASYP_V0 --format json lint -p proto -r . > /tmp/easyp-v0-lint.json; echo "lint exit=$?"
-$EASYP_V0 generate -p proto -r .          # use the flags the project already uses (Makefile/Taskfile/CI)
-git status --short                        # generated code must be committed or stashed as the baseline
+$EASYP_V0 --format json lint > .easyp-v0-lint.json; echo "lint exit=$?"     # + the project's -p/-r flags
+$EASYP_V0 generate                                                           # + the project's flags
+$EASYP_V0 breaking --against <base-branch>; echo "breaking exit=$?"          # v1 cannot do this yet (Step 7)
+git status --short
 ```
 
-If v0 generation already shows a diff (newer local plugins than the ones used for the committed code), commit that diff as a separate baseline commit, or note it. Otherwise it gets blamed on the migration.
+- If v0 generation already shows a diff, commit it as a separate baseline commit, or at least note it. Typical causes: an unpinned remote plugin that now resolves to a newer `latest`, or newer local plugins. Otherwise the diff gets blamed on the migration.
+- The `breaking` result of this step is the last compatibility check of this branch against the v0 base branch (Step 7).
 
 ## Step 3 — Module identity
 
@@ -118,11 +129,12 @@ migrate refuses to convert what it cannot prove equivalent. The error is printed
 |---|---|---|
 | `PACKAGE_NO_IMPORT_CYCLE is not implemented` | The rule was removed in v1 | Delete it from `lint.use` / `lint.except`. Tell the user import-cycle checking is gone. |
 | `unsupported legacy breaking.use "WIRE_JSON"` (or `WIRE`, `PACKAGE`) | Only FILE converts automatically | Remove `breaking.use`, migrate, then set `breaking.categories: [WIRE_JSON]` in the new `easyp.yaml`. |
-| `generate.plugins[N].remote needs a pinned semantic version` | Remote plugin without `:vX.Y.Z` | Pin it in the v0 file: `remote: plugins.beta.easyp.tech/grpc/go:v1.6.2`. Take the version currently used: the header of the generated files (`// - protoc-gen-go-grpc v1.6.2`) or the registry. |
+| `generate.plugins[N].remote needs a pinned semantic version` | Remote plugin without `:vX.Y.Z`. migrate reports only the **first** one, so check every `remote:` entry. | Pin **all** of them in the v0 file (`remote: plugins.beta.easyp.tech/grpc/go:v1.6.2`), then rerun v0 `generate`. The pins are right when the Step 2 baseline is reproduced with no diff. See [choosing remote plugin pins](#choosing-remote-plugin-pins). |
 | `unsupported ref "<name>": use a semantic version or full Git commit` | `deps` entry pinned to a branch, short hash or non-semver tag (`@common-protos-1_3_1`) | Replace it with the full commit: `git ls-remote https://<repo> <name>` (for an annotated tag, use the `^{}` line). Or remove the pin and add it after migration with `easyp get repo@<name>`, which resolves named tags. |
 | `legacy easyp.lock is missing required dependency X; recover its historical pin` | `deps` lists X but `easyp.lock` has no entry for it | Restore the entry from git history (`git log -p -- easyp.lock`), or run v0 `easyp mod download` to record it. migrate never silently picks HEAD for a dependency it expected to be locked. |
 | `unsupported legacy config field "excludes"` (inside `buf.yaml`) | A dependency's `buf.yaml` uses a field the legacy-hash verifier does not read (seen with `bufbuild/protovalidate`) | Use the [re-resolution fallback](#fallback-re-resolve-dependencies) below. |
 | `incompatible requirement X@A: historical commit is B` | Another dependency (through its BSR snapshot) needs X at a commit different from your `easyp.lock` pin | Use the [re-resolution fallback](#fallback-re-resolve-dependencies). |
+| *(fallback)* `module X has conflicting requirements A and B` from `mod tidy` | Your pin for X disagrees with the commit another dependency requires (typically a fixed BSR snapshot such as googleapis `03a91044…` required through grpc-gateway) | Pin X to the commit the other dependency requires: the snapshot is fixed and cannot move. Or drop the version from X's `require` line. Then compare the generated code (Step 7) and tell the user that X moved. |
 | `legacy EasyP configuration detected` from a **nested** path | Another v0 project inside the tree | Migrate that directory too (`--dir path --module <its identity>`), or rename it if it is only an example. |
 | `Resolve <dir>: no such file or directory` | `generate.inputs[].directory.path` is resolved relative to its `root` | Fix the v0 input. It is already broken in v0. |
 | *(after apply)* `malformed lint directive "easyp:off"` from `easyp lint` | v1 accepts only `easyp:disable RULE` / `easyp:enable RULE`; any other `easyp:` comment fails the run | `grep -rn 'easyp:' --include='*.proto' .` and rewrite each one as a `// easyp:disable RULE[, RULE]` / `// easyp:enable RULE` pair that names the rules. `buf:lint:ignore` and `nolint:` still work. |
@@ -132,11 +144,13 @@ migrate refuses to convert what it cannot prove equivalent. The error is printed
 When the historical lock cannot be verified, migrate the configuration without dependencies and let v1 resolve them again. **This can change dependency versions.** Say so to the user, and rely on the Step 7 comparison.
 
 ```bash
-cp easyp.lock /tmp/easyp.lock.v0           # keep the old pins for reference
-git rm --cached -q easyp.lock && mv easyp.lock easyp.lock.v0
-# in easyp.yaml: set `deps: []` (keep the list somewhere — you need it below)
+cp easyp.yaml easyp.yaml.v0.orig           # the untouched original: migrate's .v0.bak will hold the edited copy
+git rm --cached -q easyp.lock && mv easyp.lock easyp.lock.v0   # old pins, for reference below
+# in easyp.yaml: set `deps: []` (the original list is in easyp.yaml.v0.orig)
 easyp migrate --dir . --module github.com/acme/contracts --write
 ```
+
+In this path, roll back from `easyp.yaml.v0.orig` and `easyp.lock.v0`, not from `easyp.yaml.v0.bak`.
 
 Then add **all** requirements at once to `protobuf.mod` and run `mod tidy`. Adding them one by one with `easyp get` fails: each call checks every project import, and the other dependencies are still missing.
 
@@ -155,10 +169,21 @@ require (
 ```
 
 ```bash
-easyp mod tidy          # resolves, writes protobuf.lock, marks transitive entries `// indirect`
+easyp mod tidy          # resolves and writes protobuf.lock; dependencies you don't import directly get `// indirect`
 ```
 
-To keep an old pin, write `require <repo> <full-commit>` or a semver tag. The commit is the last segment of the pseudo-version in `easyp.lock.v0`, e.g. `v0.0.0-20260713124408-3807e3d1c38b…` → `3807e3d1c38b…`.
+To keep old pins (recommended, as it keeps the generated code stable), write `require <repo> <full-commit>`, or a semver tag. The commit is the last segment of the pseudo-version in `easyp.lock.v0`, e.g. `v0.0.0-20260713124408-3807e3d1c38b…` → `3807e3d1c38b…`. If `mod tidy` then reports `conflicting requirements`, follow the row in the table above.
+
+### Choosing remote plugin pins
+
+There is no CLI command that lists registry versions. The registry speaks gRPC only, and the newest upstream tag is not always published there.
+
+1. **Find candidates:**
+   - generated-file headers (`// - protoc-gen-go-grpc v1.6.2`, `// 	protoc-gen-go v1.36.11`). Gateway, openapiv2 and validate plugins write no version;
+   - `$EASYP_V0 --debug generate`, which logs the resolved `version=` (`latest` means unpinned);
+   - upstream tags: `git ls-remote --tags https://github.com/<org>/<plugin>`.
+2. **Decide with the user** between the version the *committed* code was generated with, and the version v0 resolves today (`latest`). Prefer the one that reproduces the committed code. If that is impossible, use the Step 2 baseline and note the bump.
+3. **Verify** each pin with v0 `generate`. `NotFound` means the registry lacks that version; try the previous tag.
 
 ## Step 6 — Apply
 
@@ -180,14 +205,19 @@ easyp --frozen mod download              # the lock is complete and verifiable
 easyp --format json lint > /tmp/easyp-v1-lint.json; echo "lint exit=$?"
 easyp generate                           # or --project DIR / --all for multi-project repos
 git status --short && git diff --stat    # compare generated code with the Step 2 baseline
-easyp breaking --against main            # works although main still holds v0 config
+easyp breaking --against HEAD            # v1 vs v1 sanity check once the migration is committed
 ```
 
 Expected results:
 
 - **Lint:** same issue set as the baseline. migrate expands v0 groups into exact rule lists, so the result is identical unless you change `linters.default` later.
 - **Generated code:** identical, **except** the descriptor header line `// 	protoc v0.14.1-v0.17.0-…-easyp` → `…-v1.0.0-…`. Any other diff needs an explanation: plugin version, dependency version from the fallback, or `generate.paths` selection.
-- **Breaking:** each revision is compiled with its own config, so comparing a v1 working tree with a v0 `main` works. If it reports `symbol … already defined` across unrelated directories, the module root `.` includes example or test projects. Scope the check with `--path proto` (as the old CI did), or narrow `roots` in `protobuf.mod`.
+- **Breaking against the v0 base branch works only for projects without dependencies.** Each revision is compiled with its own files. A v0 revision has no `protobuf.mod`/`protobuf.lock`, so v1 cannot resolve its dependency imports, and the run fails with `compile baseline descriptors: … Resolve validate/validate.proto: … no such file`.
+  - Use the v0 `breaking` result from Step 2 as the compatibility check of this branch.
+  - Tell the user that CI's breaking job will fail on the migration PR. Make it non-blocking for that PR, or keep running v0 for it.
+  - Once the migration is merged, base and head are both v1 and the check works normally.
+- **Base branch name:** use the repository's real default branch (`git symbolic-ref refs/remotes/origin/HEAD`), not `main` by assumption.
+- **`symbol … already defined`** across unrelated directories means the module root `.` includes example or test projects. Scope the check with `--path proto` (as the old CI did), or narrow `roots` in `protobuf.mod`.
 - **`validate-config`** must be clean for the **whole tree**. Remaining v0 files are the nested projects or templates from Step 1.
 
 ## Step 8 — Behaviour changes to report
@@ -197,13 +227,21 @@ Tell the user explicitly:
 - **`allow_comment_ignores` now defaults to `true`.** migrate writes the old value explicitly (`false` when v0 did not set it), so behaviour is preserved. New v1 configs get `true`.
 - **Presets differ from v0 groups.** v1 `linters.default` is cumulative: `MINIMAL` ⊂ `BASIC` ⊂ `STANDARD` ⊂ `COMMENTS`; `STANDARD` = MINIMAL+BASIC+DEFAULT. A v0 `use: [DEFAULT]` alone did *not* include MINIMAL/BASIC rules, so migrate emits `default: MINIMAL` plus explicit `enable`/`disable` lists. Offer to simplify to `default: STANDARD`; it may surface new findings.
 - **`PACKAGE_NO_IMPORT_CYCLE` is gone.**
-- **Breaking:** omitted or empty `breaking.categories` means `FILE`. The default baseline comes from `breaking.baseline: git:<ref>`; the CLI fallback is still `master`.
+- **Breaking:** omitted or empty `breaking.categories` means `FILE`. The default baseline comes from `breaking.baseline: git:<ref>`; the CLI fallback is still `master`. migrate writes `breaking: {}` when v0 had no breaking section, so offer to set `baseline: git:<default-branch>`.
 - **Generation targets:** `generate.paths` limits targets to the old input directories. Dependencies are import-only unless listed in `generate.modules`.
 - **Remote plugins** need `version:`; `:latest` is rejected.
 
 ## Step 9 — CI, scripts and cleanup
 
-Search for every caller: `grep -rnE 'easyp( |$)|easyp\.lock|EASYP_' .github .gitlab-ci.yml Makefile Taskfile*.yml scripts docs 2>/dev/null`.
+Search for every caller, and for docs that quote the v0 config:
+
+```bash
+grep -rnE 'easyp( |$)|easyp\.lock|EASYP_' .github .gitlab-ci.yml Makefile Taskfile*.yml scripts docs 2>/dev/null
+grep -rnE '^\s*(deps|lint|generate|inputs|use|except|ignore_only|against_git_ref|enum_zero_value_suffix|service_suffix):' \
+  --include='*.md' --include='*.mdx' . | grep -v node_modules
+```
+
+Agent instructions count too: `AGENTS.md`, `.github/agents`, `.github/instructions` and similar files.
 
 | v0 usage | v1 replacement |
 |---|---|
@@ -216,12 +254,12 @@ Search for every caller: `grep -rnE 'easyp( |$)|easyp\.lock|EASYP_' .github .git
 | `easyp-tech/actions/*@v1` without `version` | pass `version: v1.0.0-nightly.YYYYMMDD.N` (the action runs the Docker image of that tag) |
 | `.gitignore` ignoring `easyp.lock` patterns | commit `protobuf.mod` and `protobuf.lock` |
 
-Cleanup, **only after the user confirms** the verification results: delete `easyp.lock` and `*.v0.bak` (they stay in git history), and update README/docs that show v0 config or commands.
+Cleanup, **only after the user confirms** the verification results: delete `easyp.lock` (or `easyp.lock.v0`), `*.v0.bak` and `*.v0.orig` (they stay in git history), and update README/docs that show v0 config or commands.
 
 ## Rollback
 
 ```bash
-mv easyp.yaml.v0.bak easyp.yaml
+mv easyp.yaml.v0.bak easyp.yaml          # fallback path: use easyp.yaml.v0.orig and easyp.lock.v0 instead
 rm -f easyp.gen.yaml protobuf.lock
 [ -f protobuf.mod.v0.bak ] && mv protobuf.mod.v0.bak protobuf.mod || rm -f protobuf.mod
 # or simply: git checkout -- . && git clean -fd -- easyp.gen.yaml protobuf.mod protobuf.lock '*.v0.bak'

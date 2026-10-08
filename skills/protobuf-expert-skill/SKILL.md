@@ -94,15 +94,15 @@ User wants to...
 
 Follow [migration-v0-to-v1.md](./references/migration-v0-to-v1.md) in order; do not skip steps:
 
-1. Inventory every `easyp.yaml` in the tree, nested and hidden ones included.
-2. Record a v0 baseline: lint output and generated code.
+1. Inventory every `easyp.yaml`, nested and hidden ones included, in both the working tree and `git ls-files`.
+2. Record a v0 baseline: lint output, generated code, and v0 `breaking` against the base branch. Use the project's own flags.
 3. Get the module identity confirmed by the user.
 4. Preview with `easyp migrate --module …` (add `--resolve-lock` when there are deps). Show the candidates.
-5. Fix blockers in the v0 file, using the error → fix table.
+5. Fix blockers in the v0 file, using the error → fix table. Pin **all** remote plugins at once.
 6. Apply with `--write`.
-7. Verify with `validate-config`, `--frozen mod download`, `lint`, `generate`, then diff against the baseline, then `breaking`.
+7. Verify with `validate-config`, `--frozen mod download`, `lint` and `generate`, then diff against the baseline. v1 `breaking` against a v0 base branch fails when there are deps: rely on the Step 2 result for this PR.
 8. Report the behaviour changes.
-9. Update CI and scripts. Clean up `easyp.lock` and `*.v0.bak` only after the user confirms.
+9. Update CI, scripts and docs. Clean up `easyp.lock`, `*.v0.bak` and `*.v0.orig` only after the user confirms.
 
 Never hand-convert when `easyp migrate` can do it. Never edit `protobuf.lock` by hand. Never delete the user's v0 files before verification passes.
 
