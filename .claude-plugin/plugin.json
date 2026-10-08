@@ -1,7 +1,7 @@
 {
   "name": "protobuf-expert-skill",
-  "description": "Protocol Buffers expert with deep EasyP CLI knowledge. Helps with writing and reviewing .proto files, configuring easyp.yaml, choosing lint rules, setting up code generation, managing proto dependencies, detecting breaking API changes, and debugging easyp errors.",
-  "version": "0.1.0",
+  "description": "Protocol Buffers expert with deep EasyP CLI v1 knowledge. Helps with writing and reviewing .proto files, configuring easyp.yaml / easyp.gen.yaml / protobuf.mod, choosing lint rules and breaking profiles, setting up code generation, managing proto dependencies, debugging easyp errors, and migrating EasyP v0 projects to v1 with easyp migrate.",
+  "version": "1.0.0",
   "author": {
     "name": "EasyP Tech"
   },
@@ -17,6 +17,7 @@
     "lint",
     "code-generation",
     "claude-code",
-    "skills"
+    "skills",
+    "migration"
   ]
 }
